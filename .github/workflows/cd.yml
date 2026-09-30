@@ -1,0 +1,71 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [production]
+        default: production
+      simuler_panne:
+        description: "Faire echouer le healthcheck (pour tester le rollback)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/wacim000/devops-eval
+
+jobs:
+  # 1. On relance la CI : si elle n'est pas verte, on s'arrete la
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # 2. On construit l'image et on la pousse sur le registry GitHub
+  build-push:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build et push (tags latest, sha, version)
+        run: |
+          SHA=${GITHUB_SHA::7}
+          VERSION=1.0.${{ github.run_number }}
+          docker build --build-arg APP_VERSION=$VERSION --build-arg GIT_SHA=$SHA \
+            -t $IMAGE:latest -t $IMAGE:$SHA -t $IMAGE:$VERSION .
+          docker push --all-tags $IMAGE
+
+  # 3. On deploie sur ma machine (runner self-hosted)
+  deploy:
+    needs: build-push
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment: ${{ inputs.environment || 'production' }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: bash scripts/deploy.sh
+        env:
+          TAG: ${{ github.sha }}
+          SIMULER_PANNE: ${{ inputs.simuler_panne || false }}

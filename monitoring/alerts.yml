@@ -1,39 +1,20 @@
 groups:
-  - name: devops-eval
+  - name: app
     rules:
-      # Taux d'erreurs 5xx = erreurs 5xx / total des requêtes, sur une fenêtre glissante de 5 min.
-      # Seuil 5 % : au-delà, plus d'1 requête sur 20 échoue côté serveur -> impact utilisateur net
-      # (une API saine vise < 1 %). for: 5m évite d'alerter sur un pic isolé (redémarrage,
-      # déploiement) tout en détectant un vrai incident en moins de 10 min.
-      - alert: HighErrorRate5xx
+      # Plus de 5 % des requetes en erreur 5xx sur les 5 dernieres minutes.
+      # 5 % = 1 requete sur 20 qui plante : les utilisateurs le voient.
+      # for: 5m -> on ignore un pic court (ex : pendant un redemarrage).
+      - alert: TauxErreurs5xxEleve
         expr: |
-          (
-            sum(rate(http_requests_total{code=~"5.."}[5m]))
-            /
-            sum(rate(http_requests_total[5m]))
-          ) > 0.05
-          and
-          sum(rate(http_requests_total[5m])) > 0.1
+          sum(rate(http_requests_total{code=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
         for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Taux d'erreurs 5xx > 5 % sur 5 min"
-          description: "{{ $value | humanizePercentage }} des requêtes renvoient une 5xx."
 
-      # Latence dégradée : p95 calculé depuis l'histogramme, par route.
-      # Seuil 500 ms : les endpoints (Redis INCR/GET) répondent normalement en < 50 ms,
-      # donc 10x la normale signale une vraie dégradation. for: 10m car la latence est plus
-      # bruitée que les erreurs (GC, pics de charge) : on n'alerte que sur une dérive durable.
-      - alert: HighLatencyP95
+      # p95 de latence au-dessus de 500 ms.
+      # Normalement les requetes prennent < 50 ms, donc 500 ms = 10x plus lent.
+      # for: 10m -> la latence varie beaucoup, on attend que ca dure.
+      - alert: LatenceP95Elevee
         expr: |
-          histogram_quantile(
-            0.95,
-            sum by (le, endpoint) (rate(http_request_duration_seconds_bucket[5m]))
-          ) > 0.5
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5
         for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "p95 de latence > 500 ms sur {{ $labels.endpoint }}"
-          description: "p95 = {{ $value | humanizeDuration }} depuis 10 min."

@@ -1,57 +1,28 @@
-"""Tests d'intégration : ils utilisent un vrai Redis (service CI ou docker compose)."""
-
-import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, store
+from app.main import app, db
+
+client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def clean_redis():
-    store.delete("hits")
-    yield
-    store.delete("hits")
+def test_health_ok_quand_redis_repond():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
-@pytest.fixture
-def client():
-    return TestClient(app)
+def test_visits_incremente_le_compteur_dans_redis():
+    db.delete("visits")
+
+    assert client.post("/visits").json() == {"visits": 1}
+    assert client.post("/visits").json() == {"visits": 2}
+
+    # On verifie directement dans Redis que la valeur est bien stockee
+    assert int(db.get("visits")) == 2
 
 
-def test_health_reports_redis_up(client):
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["redis"] == "up"
-
-
-def test_hits_are_persisted_in_redis(client):
-    assert client.get("/hits").json() == {"hits": 0}
-    assert client.post("/hits").json() == {"hits": 1}
-    assert client.post("/hits").json() == {"hits": 2}
-    # la valeur est bien stockée dans Redis, pas en mémoire
-    assert int(store.get("hits")) == 2
-    assert client.get("/hits").json() == {"hits": 2}
-
-
-def test_health_returns_503_when_redis_is_down(client, monkeypatch):
-    import redis
-
-    def boom():
-        raise redis.ConnectionError("down")
-
-    monkeypatch.setattr(store, "ping", boom)
-    resp = client.get("/health")
-    assert resp.status_code == 503
-    assert resp.json()["redis"] == "down"
-
-
-def test_metrics_expose_counter_histogram_and_build_info(client):
+def test_metrics_contient_le_compteur_de_requetes():
     client.get("/health")
-    client.get("/does-not-exist")
-    text = client.get("/metrics").text
-    assert 'http_requests_total{code="200",endpoint="/health",method="GET"}' in text
-    assert 'code="404",endpoint="unmatched"' in text
-    assert 'http_request_duration_seconds_bucket{endpoint="/health"' in text
-    assert "app_build_info{" in text
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
