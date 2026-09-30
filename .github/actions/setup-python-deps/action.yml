@@ -1,0 +1,45 @@
+name: Setup Python et dépendances
+description: Installe Python, restaure le cache pip et installe les dépendances du projet.
+
+inputs:
+  python-version:
+    description: Version de Python
+    required: false
+    default: "3.12"
+  requirements:
+    description: Fichier de dépendances à installer
+    required: false
+    default: requirements-dev.txt
+
+outputs:
+  cache-hit:
+    description: true si le cache pip a été restauré
+    value: ${{ steps.setup.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python ${{ inputs.python-version }} (cache pip natif)
+      id: setup
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: |
+          requirements.txt
+          requirements-dev.txt
+
+    - name: Statut du cache
+      shell: bash
+      run: |
+        if [ "${{ steps.setup.outputs.cache-hit }}" = "true" ]; then
+          echo "Cache pip HIT (python ${{ inputs.python-version }})"
+        else
+          echo "Cache pip MISS (python ${{ inputs.python-version }}) - il sera sauvegardé en fin de job"
+        fi
+
+    - name: Installation des dépendances
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r "${{ inputs.requirements }}"
